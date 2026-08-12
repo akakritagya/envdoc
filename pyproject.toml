@@ -18,6 +18,10 @@ dependencies = [
   # it directly, so it is a dependency of this package rather than an
   # implementation detail of typer's -- and typer is free to drop it.
   "rich>=13.7,<15",
+  # Deployment manifest parsers (docker_compose.py, and its successors in
+  # G14/G15) parse YAML bound to SafeLoader only -- never yaml.load's default
+  # Loader, which can construct arbitrary Python objects from untrusted files.
+  "pyyaml>=6.0,<7",
 ]
 description = "Audit a repository's environment-variable usage against its .env.example."
 keywords = ["dotenv", "environment-variables", "static-analysis", "linter", "cli"]
@@ -43,6 +47,7 @@ dev = [
   "ruff==0.16.1",
   "mypy==2.3.0",
   "pre-commit>=4.6.1,<5",
+  "types-pyyaml>=6.0.12.20260724",
 ]
 
 [build-system]

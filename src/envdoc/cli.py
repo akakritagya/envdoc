@@ -32,9 +32,15 @@ repository, extract, audit. They differ only in what they do with the
 resulting `Report` -- `scan` always exits 0 on success, `check` exits 1 if
 `report.has_drift(config.fail_on)`.
 
-There is no deployment-manifest parser yet -- that's G8b -- so `_run` always
-calls `audit()` with `deployment_files=()`. Every variable's status is
-decided from code and `.env.example` alone until then.
+`docker-compose.yml` is the one deployment manifest with a parser so far
+(G8b's minimal slice -- `environment:` only, nothing else in the file). GHA,
+fly.toml and k8s manifests are G15's job. `_run` passes every discovered
+compose file's path to `audit()` as `deployment_files`, not just the ones
+that yielded a finding -- a compose file with no `environment:` block at all
+is precisely the case that should make every required variable
+`UNSET_IN_DEPLOYMENT`, and inferring "were there manifests?" from the
+findings themselves would conclude there were none and call the repository
+clean.
 """
 
 from datetime import UTC, datetime
@@ -50,7 +56,7 @@ from envdoc.config import resolve as resolve_config
 from envdoc.discovery import DiscoveredFile, discover
 from envdoc.models import DynamicRef, FailOn, Finding, Report
 from envdoc.render import OutputFormat, render
-from envdoc.sources import dotenv, python_ast
+from envdoc.sources import docker_compose, dotenv, python_ast
 
 app = typer.Typer(
     name="envdoc",
@@ -108,19 +114,19 @@ FailOnOption = Annotated[
 ]
 
 
-def _select(path: PurePosixPath) -> bool:
-    """Which discovered files this group's two extractors can read.
+_COMPOSE_FILENAME = "docker-compose.yml"
 
-    Deployment manifests join this list in G8b; there is no parser for them
-    yet, so selecting them here would only turn every compose file into an
-    "unparseable, skipped" warning.
-    """
-    return path.suffix == ".py" or path.name == ".env.example"
+
+def _select(path: PurePosixPath) -> bool:
+    """Which discovered files this group's three extractors can read."""
+    return path.suffix == ".py" or path.name in (".env.example", _COMPOSE_FILENAME)
 
 
 def _extract(discovered: DiscoveredFile) -> tuple[list[Finding], list[DynamicRef], list[str]]:
     if discovered.path.suffix == ".py":
         result = python_ast.extract(discovered.text, discovered.path)
+    elif discovered.path.name == _COMPOSE_FILENAME:
+        result = docker_compose.extract(discovered.text, discovered.path)
     else:
         result = dotenv.extract(discovered.text, discovered.path)
     return list(result.findings), list(result.dynamic), list(result.warnings)
@@ -137,7 +143,10 @@ def _run(path: Path, config: Config) -> Report:
     findings: list[Finding] = []
     dynamic: list[DynamicRef] = []
     warnings: list[str] = list(discovered.warnings)
+    deployment_files: list[str] = []
     for file in discovered.files:
+        if file.path.name == _COMPOSE_FILENAME:
+            deployment_files.append(str(file.path))
         file_findings, file_dynamic, file_warnings = _extract(file)
         findings.extend(file_findings)
         dynamic.extend(file_dynamic)
@@ -149,7 +158,7 @@ def _run(path: Path, config: Config) -> Report:
         dynamic=dynamic,
         warnings=warnings,
         files_scanned=len(discovered.files),
-        deployment_files=(),
+        deployment_files=deployment_files,
     )
 
 

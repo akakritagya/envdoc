@@ -23,8 +23,9 @@ runner = CliRunner()
 
 
 def _write_clean_repo(root: Path) -> None:
-    """A required variable, used and documented -- OK on every axis that
-    exists before G8b adds deployment manifests."""
+    """A required variable, used and documented, with no compose file at all
+    -- OK, since a missing manifest means "never containerised", not "unset".
+    """
     (root / "app.py").write_text('import os\nos.environ["DATABASE_URL"]\n', encoding="utf-8")
     (root / ".env.example").write_text("DATABASE_URL=\n", encoding="utf-8")
 
@@ -33,6 +34,34 @@ def _write_drifted_repo(root: Path) -> None:
     """A required variable used in code but never documented -- UNDOCUMENTED,
     which gates at every FailOn threshold including the built-in default."""
     (root / "app.py").write_text('import os\nos.environ["DATABASE_URL"]\n', encoding="utf-8")
+
+
+def test_the_flagship_case_a_required_variable_missing_from_compose_gates(tmp_path: Path) -> None:
+    """The scenario this project is named for: required in code, documented
+    in .env.example, and the compose file never sets it -- works on a
+    developer's laptop and dies in the container. A two-way audit calls this
+    clean; envdoc's third axis is what catches it."""
+    _write_clean_repo(tmp_path)
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  web:\n    environment:\n      - PORT=8000\n", encoding="utf-8"
+    )
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "unset_in_deployment" in result.stdout
+
+
+def test_check_exits_zero_when_the_compose_file_sets_the_variable(tmp_path: Path) -> None:
+    _write_clean_repo(tmp_path)
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  web:\n    environment:\n      - DATABASE_URL=postgres://localhost\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path)])
+
+    assert result.exit_code == 0
 
 
 def test_version_flag_prints_the_installed_version_to_stdout_and_exits_zero() -> None:
