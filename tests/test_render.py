@@ -241,9 +241,7 @@ def test_the_full_markdown_output_for_a_representative_report() -> None:
         occurrences=(occurrence("src/app.py", line=3),),
     )
 
-    text = render_markdown(
-        report(target, root="src/project", warnings=("a.py: skipped, not valid UTF-8",))
-    )
+    text = render_markdown(report(target, root="src/project"))
 
     assert text == (
         "# envdoc report for `src/project`\n"
@@ -251,10 +249,6 @@ def test_the_full_markdown_output_for_a_representative_report() -> None:
         "| Variable | Status | Required | Occurrences |\n"
         "| --- | --- | --- | --- |\n"
         "| `PORT` | ok | no | src/app.py:3 |\n"
-        "\n"
-        "## Warnings\n"
-        "\n"
-        "- a.py: skipped, not valid UTF-8\n"
     )
 
 
@@ -262,8 +256,14 @@ def test_markdown_reports_no_variables_found_on_an_empty_report() -> None:
     assert "No environment variables found." in render_markdown(report())
 
 
-def test_markdown_omits_the_warnings_section_when_there_are_none() -> None:
-    assert "## Warnings" not in render_markdown(report(variable()))
+def test_markdown_never_includes_a_warnings_section() -> None:
+    """Warnings are cli.py's to print, not render.py's -- see the module
+    docstring. If they were embedded here, --quiet could only suppress them
+    by cli.py reconstructing the Report with warnings=() first."""
+    text = render_markdown(report(variable(), warnings=("a.py: skipped, not valid UTF-8",)))
+
+    assert "Warnings" not in text
+    assert "a.py: skipped, not valid UTF-8" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -291,10 +291,12 @@ def test_table_includes_the_variable_name_and_status() -> None:
     assert "stale" in text
 
 
-def test_table_lists_warnings_after_the_table() -> None:
-    text = render_table(report(warnings=("a.py: skipped, not valid UTF-8",)))
+def test_table_never_includes_warnings() -> None:
+    """See test_markdown_never_includes_a_warnings_section: same reasoning,
+    same rule, for the table renderer."""
+    text = render_table(report(variable(), warnings=("a.py: skipped, not valid UTF-8",)))
 
-    assert "a.py: skipped, not valid UTF-8" in text
+    assert "a.py: skipped, not valid UTF-8" not in text
 
 
 def test_table_does_not_crash_on_an_empty_report() -> None:
