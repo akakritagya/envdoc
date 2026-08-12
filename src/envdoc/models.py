@@ -113,6 +113,17 @@ _GATING_STATUSES: dict[FailOn, frozenset[Status]] = {
     ),
 }
 
+# has_drift indexes this dict directly, so a FailOn left out would raise
+# KeyError from inside `check` rather than failing at import time, where it is
+# actually cheap to notice.
+assert set(_GATING_STATUSES) == set(FailOn), "every FailOn threshold must have a gating set"
+# ANY is the only threshold required to cover every status: it is the "fail on
+# anything" case, and any status left out of it would be a status that no
+# threshold can ever gate on.
+assert _GATING_STATUSES[FailOn.ANY] == set(Status) - {Status.OK}, (
+    "FailOn.ANY must gate on every status except OK"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Occurrence:

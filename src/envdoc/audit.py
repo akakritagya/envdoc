@@ -63,6 +63,12 @@ _HEADLINE_ORDER = (
     Status.OK,
 )
 
+# _headline's next() has no default, so a Status left out of the order above
+# would raise StopIteration instead of a clear failure -- and it would do so
+# from inside `check`, on whichever CI run first produces that status. This
+# turns the gap into an import-time assertion instead.
+assert set(_HEADLINE_ORDER) == set(Status), "every Status must appear in _HEADLINE_ORDER"
+
 
 def _statuses(variable: Variable, *, manifests_found: bool) -> frozenset[Status]:
     """Every status that applies to one variable, from the table above."""
