@@ -28,10 +28,21 @@ reach rendering; sort into tuples first" rule exists to prevent.
 `defaults`, `deployment_targets` and `occurrences` don't need the same
 treatment: they arrive from `aggregate.py` and `audit.py` already as sorted
 tuples, not sets.
+
+Warnings are not printed here, even though every renderer receives the full
+`Report`. `render_json`'s payload always carries them -- they're part of the
+schema, for a consumer that isn't a terminal -- but `render_table` and
+`render_markdown` leave them out entirely. Printing is `cli.py`'s job by the
+architecture's own hard rule ("no print below cli.py"), and if a renderer
+baked warnings into its returned string, `--quiet` could only suppress them
+by cli.py reconstructing the `Report` with `warnings=()` first -- mutating a
+supposedly-complete domain object to fake a display option. `cli.py` prints
+the rendered report, then prints `report.warnings` itself, unless `--quiet`.
 """
 
 import io
 import json
+from enum import StrEnum
 
 from rich.console import Console
 from rich.table import Table
@@ -43,6 +54,17 @@ JSON_SCHEMA_VERSION = 1
 _STATUS_ORDER = tuple(Status)
 
 _TABLE_WIDTH = 100
+
+
+class OutputFormat(StrEnum):
+    """The formats `render()` knows how to produce, and nothing else does --
+    `cli.py`'s `--format` option is a `typer.Option` typed against this enum
+    rather than a bare string, so an unrecognised value is rejected by click
+    before envdoc's own code ever sees it."""
+
+    TABLE = "table"
+    MARKDOWN = "markdown"
+    JSON = "json"
 
 
 def _sorted_statuses(statuses: frozenset[Status]) -> tuple[Status, ...]:
@@ -87,11 +109,6 @@ def render_table(report: Report) -> str:
     )
     console.print(table)
 
-    if report.warnings:
-        console.print(f"{len(report.warnings)} warning(s):")
-        for warning in report.warnings:
-            console.print(f"  {warning}")
-
     return buffer.getvalue()
 
 
@@ -117,12 +134,6 @@ def render_markdown(report: Report) -> str:
             )
     else:
         lines.append("No environment variables found.")
-
-    if report.warnings:
-        lines.append("")
-        lines.append("## Warnings")
-        lines.append("")
-        lines.extend(f"- {warning}" for warning in report.warnings)
 
     return "\n".join(lines) + "\n"
 
@@ -179,3 +190,23 @@ def render_json(report: Report, *, tool_version: str, generated_at: str | None =
     payload["warnings"] = list(report.warnings)
 
     return json.dumps(payload, indent=2) + "\n"
+
+
+def render(
+    report: Report,
+    output_format: OutputFormat,
+    *,
+    tool_version: str,
+    generated_at: str | None = None,
+) -> str:
+    """Dispatch to the renderer for `output_format`.
+
+    The one place the three functions above are named together, so `cli.py`
+    doesn't need its own `if format == ...` chain to stay in sync with this
+    module by hand.
+    """
+    if output_format is OutputFormat.TABLE:
+        return render_table(report)
+    if output_format is OutputFormat.MARKDOWN:
+        return render_markdown(report)
+    return render_json(report, tool_version=tool_version, generated_at=generated_at)
