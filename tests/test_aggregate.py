@@ -15,7 +15,7 @@ load-bearing.
 
 from helpers import deployment_entry, example_entry, finding
 
-from envdoc.aggregate import aggregate
+from envdoc.aggregate import aggregate, cite_defaults
 from envdoc.models import Confidence, Status
 
 
@@ -196,3 +196,19 @@ def test_aggregating_nothing_produces_nothing() -> None:
 
     assert result.variables == ()
     assert result.warnings == ()
+
+
+def test_cite_defaults_is_empty_with_fewer_than_two_distinct_defaults() -> None:
+    assert cite_defaults([]) == ""
+    assert cite_defaults([finding("PORT", default="8000").occurrence]) == ""
+
+
+def test_cite_defaults_names_the_first_occurrence_of_each_distinct_default() -> None:
+    """The exact string `sync.py` reuses for its conflicting-defaults comment,
+    so the file and this warning never describe one disagreement two ways."""
+    occurrences = [
+        finding("PORT", "src/api.py", line=9, default="8000").occurrence,
+        finding("PORT", "src/worker.py", line=4, default="3000").occurrence,
+    ]
+
+    assert cite_defaults(occurrences) == "'3000' (src/worker.py:4), '8000' (src/api.py:9)"

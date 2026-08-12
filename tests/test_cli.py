@@ -32,7 +32,8 @@ def _write_clean_repo(root: Path) -> None:
 
 def _write_drifted_repo(root: Path) -> None:
     """A required variable used in code but never documented -- UNDOCUMENTED,
-    which gates at every FailOn threshold including the built-in default."""
+    which gates at every FailOn threshold including the built-in default, and
+    what `sync` exists to fix."""
     (root / "app.py").write_text('import os\nos.environ["DATABASE_URL"]\n', encoding="utf-8")
 
 
@@ -203,3 +204,71 @@ def test_an_exclude_flag_removes_a_file_from_the_scan(tmp_path: Path) -> None:
 
     names = [v["name"] for v in json.loads(result.stdout)["variables"]]
     assert names == ["DATABASE_URL"]
+
+
+def test_sync_adds_a_missing_variable_and_exits_zero(tmp_path: Path) -> None:
+    _write_drifted_repo(tmp_path)
+
+    result = runner.invoke(cli.app, ["sync", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "+ DATABASE_URL" in result.stdout
+    assert (tmp_path / ".env.example").read_text(encoding="utf-8") == (
+        "# Added by envdoc\nDATABASE_URL=\n"
+    )
+
+
+def test_sync_run_twice_leaves_the_file_byte_identical(tmp_path: Path) -> None:
+    """The gate's idempotency check: a second run on an already-synced
+    repository changes nothing."""
+    _write_drifted_repo(tmp_path)
+    runner.invoke(cli.app, ["sync", str(tmp_path)])
+    first = (tmp_path / ".env.example").read_bytes()
+
+    result = runner.invoke(cli.app, ["sync", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "up to date" in result.stdout
+    assert (tmp_path / ".env.example").read_bytes() == first
+
+
+def test_sync_dry_run_reports_the_addition_and_writes_nothing(tmp_path: Path) -> None:
+    _write_drifted_repo(tmp_path)
+
+    result = runner.invoke(cli.app, ["sync", str(tmp_path), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "+ DATABASE_URL" in result.stdout
+    assert not (tmp_path / ".env.example").exists()
+
+
+def test_sync_preserves_comments_in_an_existing_file(tmp_path: Path) -> None:
+    _write_drifted_repo(tmp_path)
+    (tmp_path / ".env.example").write_text(
+        "# where to get one: the dashboard\nSTRIPE_KEY=sk_test\n", encoding="utf-8"
+    )
+
+    result = runner.invoke(cli.app, ["sync", str(tmp_path)])
+
+    text = (tmp_path / ".env.example").read_text(encoding="utf-8")
+    assert result.exit_code == 0
+    assert text.startswith("# where to get one: the dashboard\nSTRIPE_KEY=sk_test\n")
+    assert "DATABASE_URL=" in text
+
+
+def test_sync_never_gates_even_with_pending_changes(tmp_path: Path) -> None:
+    """Exit 1 means drift, and gating is `check`'s job alone -- sync always
+    exits 0, dry-run or not."""
+    _write_drifted_repo(tmp_path)
+
+    result = runner.invoke(cli.app, ["sync", str(tmp_path), "--dry-run"])
+
+    assert result.exit_code == 0
+
+
+def test_sync_exits_two_for_a_nonexistent_path() -> None:
+    result = runner.invoke(cli.app, ["sync", "/no/such/directory"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "no such directory" in result.stderr

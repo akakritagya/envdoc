@@ -57,6 +57,9 @@ from envdoc.discovery import DiscoveredFile, discover
 from envdoc.models import DynamicRef, FailOn, Finding, Report
 from envdoc.render import OutputFormat, render
 from envdoc.sources import docker_compose, dotenv, python_ast
+from envdoc.sync import EXAMPLE_FILENAME
+from envdoc.sync import plan as plan_sync
+from envdoc.sync import write as write_sync
 
 app = typer.Typer(
     name="envdoc",
@@ -111,6 +114,9 @@ IncludeTimestampOption = Annotated[
 FailOnOption = Annotated[
     FailOn | None,
     typer.Option("--fail-on", help="Drift threshold for `check`. Overrides pyproject.toml."),
+]
+DryRunOption = Annotated[
+    bool, typer.Option("--dry-run", help="Show what sync would add without writing it.")
 ]
 
 
@@ -246,3 +252,50 @@ def check(
 
     _print_report(report, config)
     _exit(1 if report.has_drift(config.fail_on) else 0)
+
+
+@app.command()
+def sync(
+    path: PathArgument = Path("."),
+    exclude: ExcludeOption = None,
+    quiet: QuietOption = False,
+    dry_run: DryRunOption = False,
+) -> None:
+    """Append variables read in code but missing from .env.example.
+
+    Append-only: a STALE entry -- documented, but nothing reads it -- is left
+    exactly as it was. `check` already reports it; removing someone's
+    documentation on their behalf is not this command's call to make. Never
+    exits 1 -- gating is `check`'s job alone, even with pending changes and
+    `--dry-run` together.
+    """
+    example_path = path / EXAMPLE_FILENAME
+    try:
+        config = _resolve(
+            path, exclude=exclude, fail_on=None, format=None, quiet=quiet, include_timestamp=False
+        )
+        report = _run(path, config)
+        original = example_path.read_text(encoding="utf-8") if example_path.exists() else ""
+        result = plan_sync(report, original=original)
+    except (FileNotFoundError, NotADirectoryError, ConfigError, OSError) as exc:
+        typer.echo(str(exc), err=True)
+        _exit(2)
+
+    if result.added:
+        for name in result.added:
+            typer.echo(f"+ {name}")
+    else:
+        typer.echo("up to date")
+
+    if result.changed and not dry_run:
+        try:
+            write_sync(result.updated, example_path)
+        except OSError as exc:
+            typer.echo(str(exc), err=True)
+            _exit(2)
+
+    if not config.quiet:
+        for warning in report.warnings:
+            typer.echo(warning, err=True)
+
+    _exit(0)
