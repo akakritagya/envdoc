@@ -1,0 +1,70 @@
+name: CI
+
+# Runs on every push to main and every pull request. The local pre-commit
+# hooks cover the same ground, but they are bypassable with --no-verify and do
+# not exist at all for anyone who clones the repo, so they are not a gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+# A new push to a branch makes the in-flight run for that branch obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  # pyproject.toml claims requires-python = ">=3.12". That is a promise to
+  # anyone who installs it, so it is worth actually testing rather than
+  # asserting -- one job per version the claim covers.
+  test:
+    name: Test on Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: uv sync --group dev
+
+      - name: Test
+        run: uv run pytest
+
+  # Lint, format and type-check results do not vary by interpreter -- mypy is
+  # pinned to python_version 3.12 in pyproject.toml regardless of what runs it
+  # -- so these run once instead of being repeated across the matrix.
+  quality:
+    name: Lint, format, types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --group dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy

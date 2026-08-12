@@ -1,0 +1,81 @@
+[project]
+authors = [{name = "Kritagya"}]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Utilities",
+  "Typing :: Typed",
+]
+dependencies = [
+  "typer>=0.15,<0.28",
+  # rich is declared even though typer already pulls it in. render.py imports
+  # it directly, so it is a dependency of this package rather than an
+  # implementation detail of typer's -- and typer is free to drop it.
+  "rich>=13.7,<15",
+]
+description = "Audit a repository's environment-variable usage against its .env.example."
+keywords = ["dotenv", "environment-variables", "static-analysis", "linter", "cli"]
+license = "MIT"
+license-files = ["LICENSE"]
+name = "envdoc"
+readme = "README.md"
+requires-python = ">=3.12"
+version = "0.1.0"
+
+[project.urls]
+Homepage = "https://github.com/akakritagya/envdoc"
+Issues = "https://github.com/akakritagya/envdoc/issues"
+Repository = "https://github.com/akakritagya/envdoc"
+
+[project.scripts]
+envdoc = "envdoc.cli:app"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1,<10",
+  "pytest-cov>=7.1,<8",
+  "ruff==0.16.1",
+  "mypy==2.3.0",
+  "pre-commit>=4.6.1,<5",
+]
+
+[build-system]
+build-backend = "uv_build"
+requires = ["uv_build>=0.12.1,<0.13.0"]
+
+# No target-version: ruff reads it from requires-python. No indent-width: 4 is
+# the default. Both were carried as explicit values in nepkit and are dropped
+# here rather than kept as copied debt.
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN", "RUF"]
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers --strict-config"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["envdoc"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:", "raise NotImplementedError"]
+show_missing = true
+
+[tool.mypy]
+files = ["src", "tests"]
+python_executable = ".venv/bin/python"
+python_version = "3.12"
+strict = true
