@@ -205,7 +205,6 @@ def test_findings_come_out_sorted_by_position_regardless_of_tree_order() -> None
         'settings = {}\nsettings.get("SECRET", "8000")\n',
         "import os\ndict(os.environ)\n",
         'import os\nif "SECRET" in os.environ:\n    pass\n',
-        'from os import environ\nenviron["SECRET"]\n',
         'import os\nos.getenv("")\n',
     ],
     ids=[
@@ -217,7 +216,6 @@ def test_findings_come_out_sorted_by_position_regardless_of_tree_order() -> None
         "an_unrelated_get",
         "environ_used_as_a_whole_mapping",
         "a_membership_test_rather_than_a_read",
-        "reached_through_an_import_alias",
         "an_empty_name",
     ],
 )
@@ -228,9 +226,12 @@ def test_these_produce_nothing_at_all(source: str) -> None:
     to `ast` for free, and a scanner that reports them teaches its users to
     ignore it.
 
-    The last two pin scope rather than principle. Import aliases are G3's job
-    and a membership test is not a read, so both are expected to yield nothing
-    *today*; the day either starts working, this test is the one that says so.
+    A membership test pins scope rather than principle: `"X" in os.environ`
+    asks whether the variable is set instead of reading it, and is expected to
+    yield nothing *today*. The day that changes, this is the test that says so.
+
+    Which spellings of `os.environ` are followed is pinned separately, in
+    test_python_aliases.py.
     """
     result = extract_source(source)
 
