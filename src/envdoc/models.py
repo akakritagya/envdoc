@@ -171,6 +171,24 @@ class DynamicRef:
 
 
 @dataclass(frozen=True, slots=True)
+class ExtractResult:
+    """What one parser made of one file.
+
+    Every extractor returns this shape, whichever of the three axes it reads,
+    so discovery can concatenate results from a Python file, an .env.example
+    and a compose file without caring which produced what.
+
+    Carrying `warnings` rather than printing them is what keeps the parsers
+    below the CLI layer: an unparseable file is worth telling the user about,
+    but only the CLI knows whether --quiet is in force.
+    """
+
+    findings: tuple[Finding, ...]
+    dynamic: tuple[DynamicRef, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Variable:
     """One environment variable, aggregated across every occurrence everywhere.
 
