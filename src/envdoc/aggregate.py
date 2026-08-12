@@ -59,27 +59,33 @@ def _best_confidence(findings: Iterable[Finding]) -> Confidence:
     )
 
 
-def _conflict_warning(name: str, code_findings: list[Finding]) -> str | None:
-    """Warn when call sites disagree about a variable's default.
+def cite_defaults(occurrences: Iterable[Occurrence]) -> str:
+    """The first occurrence of each distinct default among `occurrences`, cited.
 
-    Names the first location observed for each distinct default, so the message
-    points at two files to go and reconcile rather than just asserting that a
-    disagreement exists somewhere.
+    Empty when fewer than two distinct defaults appear -- there is nothing to
+    cite when call sites agree, or when at most one of them set a default at
+    all. Shared between the conflict warning below and `sync.py`'s comment for
+    the same disagreement, so the file and the warning never describe one
+    conflict two different ways.
     """
     first_seen: dict[str, Occurrence] = {}
-    for finding in sorted(code_findings, key=lambda f: sort_key(f.occurrence)):
-        default = finding.occurrence.default
-        if default is not None and default not in first_seen:
-            first_seen[default] = finding.occurrence
+    for occurrence in sorted(occurrences, key=sort_key):
+        if occurrence.default is not None and occurrence.default not in first_seen:
+            first_seen[occurrence.default] = occurrence
 
     if len(first_seen) < 2:
-        return None
+        return ""
 
-    cited = ", ".join(
+    return ", ".join(
         f"{default!r} ({occurrence.file}:{occurrence.line})"
         for default, occurrence in sorted(first_seen.items())
     )
-    return f"Conflicting defaults for {name}: {cited}"
+
+
+def _conflict_warning(name: str, code_findings: list[Finding]) -> str | None:
+    """Warn when call sites disagree about a variable's default."""
+    cited = cite_defaults(f.occurrence for f in code_findings)
+    return f"Conflicting defaults for {name}: {cited}" if cited else None
 
 
 def aggregate(findings: Iterable[Finding]) -> AggregateResult:

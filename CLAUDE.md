@@ -54,6 +54,7 @@ hook/Action.
 cli.py         argv, config resolution, exit codes, printing   <- ONLY layer with a terminal
    |
 render.py      Report -> table / markdown / json
+sync.py        Report -> updated .env.example text              <- pure planner + the one atomic write
    |
 audit.py       three-way set algebra -> Report                 <- pure, no I/O
    |
@@ -93,6 +94,10 @@ defaults**, where two files disagree about a variable's fallback.
   status needs the example file and manifests.
 - A `DynamicRef` (`os.getenv(key_var)`) has no name, never becomes a `Variable`, and never
   counts toward drift by default. **Never fabricate a name for one.**
+- `sync` never picks a default when call sites disagree (defect E). More than one distinct
+  default writes an empty value plus a comment citing every default and its file —
+  `aggregate.cite_defaults()` is the one place that citation is formatted, shared with the
+  conflicting-defaults warning so the file and the warning never tell two different stories.
 
 ## Determinism is a contract
 
