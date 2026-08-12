@@ -53,7 +53,7 @@ hook/Action.
 ```text
 cli.py         argv, config resolution, exit codes, printing   <- ONLY layer with a terminal
    |
-render/        Report -> table / markdown / json
+render.py      Report -> table / markdown / json
    |
 audit.py       three-way set algebra -> Report                 <- pure, no I/O
    |
