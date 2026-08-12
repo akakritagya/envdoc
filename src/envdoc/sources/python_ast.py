@@ -194,15 +194,20 @@ def _argument(call: ast.Call, position: int, name: str) -> ast.expr | None:
     return None
 
 
-def extract(source: str, file: PurePosixPath) -> ExtractResult:
+def extract(text: str, file: PurePosixPath) -> ExtractResult:
     """Find every environment-variable read in one Python file.
 
     `file` is recorded as given and should already be relative to the scan
     root: absolute paths would leak the machine's identity into output that is
     supposed to be byte-identical everywhere.
+
+    The parameter is named `text` rather than `source` to match
+    `sources/dotenv.py:extract` -- the two are the closest thing this codebase
+    has to a shared extractor interface, and a future dispatch table calling
+    either by keyword should not have to know which is which.
     """
     try:
-        tree = ast.parse(source)
+        tree = ast.parse(text)
     except (SyntaxError, ValueError) as exc:
         # ValueError is what a NUL byte used to raise and SyntaxError is what
         # current versions raise for it; catching both means a binary file that

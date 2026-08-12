@@ -15,7 +15,7 @@ from pathlib import PurePosixPath
 import pytest
 from helpers import finding, occurrence
 
-from envdoc.models import Confidence, FailOn, Report, Status, Variable
+from envdoc.models import _GATING_STATUSES, Confidence, FailOn, Report, Status, Variable
 
 
 def variable(
@@ -153,3 +153,16 @@ def test_by_status_finds_a_variable_by_a_secondary_status_not_just_the_headline(
 
 def test_by_status_returns_nothing_when_no_variable_carries_it() -> None:
     assert report(variable(statuses=frozenset({Status.OK}))).by_status(Status.STALE) == ()
+
+
+def test_every_fail_on_threshold_names_a_gating_set() -> None:
+    """has_drift indexes _GATING_STATUSES directly, so a FailOn member left
+    out of it would raise KeyError the first time someone gated on it, rather
+    than failing at import time where it costs nothing to notice. The
+    module-level assertion in models.py is what enforces this; this test pins
+    that the assertion holds and stays holding."""
+    assert set(_GATING_STATUSES) == set(FailOn)
+
+
+def test_fail_on_any_gates_on_every_status_except_ok() -> None:
+    assert _GATING_STATUSES[FailOn.ANY] == set(Status) - {Status.OK}
