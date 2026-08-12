@@ -24,12 +24,26 @@ concatenation -- becomes a DynamicRef rather than a guess. It has no name, so
 it never becomes a Variable and never counts toward drift; it is there to say
 that a read exists here which no static analysis will see.
 
-Naive on purpose. This module recognises `os.environ` and `os.getenv` reached
-through the `os` module by name, and nothing else; `from os import environ`
-is alias tracking, which is its own group.
+Each of those spellings is followed through whatever name the file gave it --
+`import os as o`, `from os import environ`, `from os import getenv as ge`,
+`env = os.environ`. Real code uses all four, and a file that got missed because
+of how it spelled its import is the worst failure this tool has: a clean report
+and a broken scanner look identical from outside.
+
+What keeps that from becoming guesswork is that every alias must be proved by
+an import in the same file. A bare `getenv("X")` is only os.getenv if this file
+imported it from os -- plenty of projects have their own `getenv` helper, and
+reporting its argument would put names into the report that the environment has
+never heard of.
+
+Scope analysis is not attempted. Bindings are collected file-wide, so a local
+or parameter that shadows an alias is still read as the alias and over-reports.
+That is the right way to be wrong: a spurious row is visible and someone
+deletes it, while a silently missed variable is what ships to production.
 """
 
 import ast
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from envdoc.models import (
@@ -44,24 +58,100 @@ from envdoc.models import (
 )
 
 
-def _is_os_environ(node: ast.expr) -> bool:
-    """Whether `node` is the expression `os.environ`."""
+@dataclass(slots=True)
+class _Aliases:
+    """Every local name this file bound to something in `os`.
+
+    Three separate sets because the three are used differently: a module name
+    is subscripted through an attribute, an environ name is subscripted
+    directly, and a getenv name is called.
+    """
+
+    module: set[str] = field(default_factory=set)
+    environ: set[str] = field(default_factory=set)
+    getenv: set[str] = field(default_factory=set)
+
+
+def _collect_aliases(tree: ast.AST) -> _Aliases:
+    """Walk the whole file for bindings of `os`, `os.environ` and `os.getenv`.
+
+    The whole file, not just its top level: an import inside a function or
+    behind `if TYPE_CHECKING` binds the name just as well, and this module has
+    no business deciding which imports are real.
+    """
+    aliases = _Aliases()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                if name.name == "os":
+                    aliases.module.add(name.asname or "os")
+                elif name.name.startswith("os.") and name.asname is None:
+                    # `import os.path` binds the name `os`, so os.environ works
+                    # after it. `import os.path as p` binds p to os.path, which
+                    # has no environ, so it deliberately binds nothing here.
+                    aliases.module.add("os")
+
+        elif isinstance(node, ast.ImportFrom):
+            # level > 0 is `from .os import ...`, a local module that merely
+            # shares the name.
+            if node.module != "os" or node.level:
+                continue
+            for name in node.names:
+                if name.name == "*":
+                    aliases.environ.add("environ")
+                    aliases.getenv.add("getenv")
+                elif name.name == "environ":
+                    aliases.environ.add(name.asname or "environ")
+                elif name.name == "getenv":
+                    aliases.getenv.add(name.asname or "getenv")
+
+    # A second pass, because `env = os.environ` can only be recognised once the
+    # imports are known, and an import may sit below the assignment in the file.
+    for node in ast.walk(tree):
+        targets: list[ast.expr]
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+
+        names = {t.id for t in targets if isinstance(t, ast.Name)}
+        if not names:
+            continue
+
+        value = node.value
+        if value is not None and _is_attribute_of_os(value, "environ", aliases):
+            aliases.environ |= names
+        elif value is not None and _is_attribute_of_os(value, "getenv", aliases):
+            aliases.getenv |= names
+
+    return aliases
+
+
+def _is_attribute_of_os(node: ast.expr, attribute: str, aliases: _Aliases) -> bool:
+    """Whether `node` is `<os>.<attribute>`, for any name bound to the module."""
     return (
         isinstance(node, ast.Attribute)
-        and node.attr == "environ"
+        and node.attr == attribute
         and isinstance(node.value, ast.Name)
-        and node.value.id == "os"
+        and node.value.id in aliases.module
     )
 
 
-def _is_os_call(func: ast.expr, name: str) -> bool:
-    """Whether `func` is `os.<name>`, as in the callee of `os.getenv(...)`."""
-    return (
-        isinstance(func, ast.Attribute)
-        and func.attr == name
-        and isinstance(func.value, ast.Name)
-        and func.value.id == "os"
-    )
+def _is_environ(node: ast.expr, aliases: _Aliases) -> bool:
+    """Whether `node` is the environment mapping, however it was reached."""
+    if isinstance(node, ast.Name):
+        return node.id in aliases.environ
+    return _is_attribute_of_os(node, "environ", aliases)
+
+
+def _is_getenv(func: ast.expr, aliases: _Aliases) -> bool:
+    """Whether `func` is the callee of a `getenv(...)`-shaped call."""
+    if isinstance(func, ast.Name):
+        return func.id in aliases.getenv
+    return _is_attribute_of_os(func, "getenv", aliases)
 
 
 def _fallback(node: ast.expr | None) -> tuple[bool, str | None]:
@@ -125,6 +215,8 @@ def extract(source: str, file: PurePosixPath) -> ExtractResult:
             findings=(), dynamic=(), warnings=(f"{file}: could not parse, skipped ({exc})",)
         )
 
+    aliases = _collect_aliases(tree)
+
     findings: list[Finding] = []
     dynamic: list[DynamicRef] = []
 
@@ -133,14 +225,14 @@ def extract(source: str, file: PurePosixPath) -> ExtractResult:
         has_fallback = False
         default: str | None = None
 
-        if isinstance(node, ast.Subscript) and _is_os_environ(node.value):
+        if isinstance(node, ast.Subscript) and _is_environ(node.value, aliases):
             name_node = node.slice
         elif isinstance(node, ast.Call) and (
-            _is_os_call(node.func, "getenv")
+            _is_getenv(node.func, aliases)
             or (
                 isinstance(node.func, ast.Attribute)
                 and node.func.attr == "get"
-                and _is_os_environ(node.func.value)
+                and _is_environ(node.func.value, aliases)
             )
         ):
             # `os.getenv()` is a TypeError waiting to happen, but it parses,
