@@ -71,7 +71,10 @@ Python via the standard library's `ast`; `ts_js.py` reads JS/TS/JSX/TSX via tree
 the first extractor that isn't built on a language's own stdlib parser. Both plug into the
 identical `extract(text, file) -> ExtractResult` seam — a resolved name becomes a
 `Finding`, an unresolved reference becomes a `DynamicRef` rather than a guess — so nothing
-downstream of `sources/` needs to know which parser produced either.
+downstream of `sources/` needs to know which parser produced either. A `.py` file is read
+by **two** extractors independently: `python_ast.py` for call-site reads, `python_settings.py`
+for `pydantic-settings` classes. Neither is a mode of the other — `cli.py` merges both
+`ExtractResult`s rather than picking one.
 
 **Hard rules.** Nothing under `sources/` or `audit.py` imports `cli`. No `print` below
 `cli.py` — warnings accumulate on `Report.warnings` and the CLI decides whether `--quiet`
