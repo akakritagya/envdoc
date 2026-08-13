@@ -63,7 +63,7 @@ _HEADLINE_ORDER = (
     Status.OK,
 )
 
-# _headline's next() has no default, so a Status left out of the order above
+# headline()'s next() has no default, so a Status left out of the order above
 # would raise StopIteration instead of a clear failure -- and it would do so
 # from inside `check`, on whichever CI run first produces that status. This
 # turns the gap into an import-time assertion instead.
@@ -125,7 +125,7 @@ def audit(
                 name=variable.name,
                 required=variable.required,
                 confidence=variable.confidence,
-                status=_headline(statuses),
+                status=headline(statuses),
                 statuses=statuses,
                 defaults=variable.defaults,
                 occurrences=variable.occurrences,
@@ -147,6 +147,13 @@ def audit(
     )
 
 
-def _headline(statuses: frozenset[Status]) -> Status:
-    """The one status to lead with, by consequence."""
+def headline(statuses: frozenset[Status]) -> Status:
+    """The one status to lead with, by consequence.
+
+    Public because `baseline.py` needs the same rule: suppressing one of a
+    variable's several statuses has to recompute which one leads, not just
+    discard the old headline -- a variable that was UNDOCUMENTED and
+    UNSET_IN_DEPLOYMENT, with only the latter baselined, must lead with
+    UNDOCUMENTED afterwards rather than falling back to OK.
+    """
     return next(status for status in _HEADLINE_ORDER if status in statuses)

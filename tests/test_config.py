@@ -1,10 +1,12 @@
 """Pins config resolution: a CLI flag beats `[tool.envdoc]`, which beats the
 built-in default -- decided independently per field, never all-or-nothing.
 
-`quiet` and `include_timestamp` are pinned separately from the other three
+`quiet` and `include_timestamp` are pinned separately from the other four
 fields: neither has a CLI spelling for "explicitly off", so their precedence
 collapses to `flag or pyproject_value` rather than "flag, if given, else
-pyproject" -- see config.py's module docstring for why.
+pyproject" -- see config.py's module docstring for why. `baseline`'s built-in
+default (`None`) is also its "disabled" value -- there is no auto-detected
+baseline file, only an explicitly configured one.
 """
 
 from pathlib import Path
@@ -45,8 +47,13 @@ def test_resolving_config_for_a_nonexistent_root_uses_the_defaults(tmp_path: Pat
         ('[tool.envdoc]\nformat = "json"\n', "format", OutputFormat.JSON),
         ("[tool.envdoc]\nquiet = true\n", "quiet", True),
         ("[tool.envdoc]\ninclude_timestamp = true\n", "include_timestamp", True),
+        (
+            '[tool.envdoc]\nbaseline = ".envdoc-baseline.json"\n',
+            "baseline",
+            ".envdoc-baseline.json",
+        ),
     ],
-    ids=["exclude", "fail_on", "format", "quiet", "include_timestamp"],
+    ids=["exclude", "fail_on", "format", "quiet", "include_timestamp", "baseline"],
 )
 def test_a_pyproject_value_is_used_when_no_flag_overrides_it(
     tmp_path: Path, toml: str, field: str, expected: object
@@ -72,6 +79,12 @@ def test_a_format_flag_overrides_pyproject_toml(tmp_path: Path) -> None:
     _write_pyproject(tmp_path, '[tool.envdoc]\nformat = "json"\n')
 
     assert resolve(tmp_path, format=OutputFormat.MARKDOWN).format is OutputFormat.MARKDOWN
+
+
+def test_a_baseline_flag_overrides_pyproject_toml(tmp_path: Path) -> None:
+    _write_pyproject(tmp_path, '[tool.envdoc]\nbaseline = "a.json"\n')
+
+    assert resolve(tmp_path, baseline="b.json").baseline == "b.json"
 
 
 def test_the_quiet_flag_forces_quiet_on_even_when_pyproject_does_not_set_it(
@@ -124,6 +137,7 @@ def test_a_tool_envdoc_that_is_not_a_table_raises_a_config_error(tmp_path: Path)
             '[tool.envdoc]\ninclude_timestamp = "yes"\n',
             "include_timestamp must be a boolean",
         ),
+        ("[tool.envdoc]\nbaseline = 1\n", "baseline must be a string"),
     ],
     ids=[
         "exclude_not_a_list",
@@ -134,6 +148,7 @@ def test_a_tool_envdoc_that_is_not_a_table_raises_a_config_error(tmp_path: Path)
         "format_not_a_valid_member",
         "quiet_not_a_boolean",
         "include_timestamp_not_a_boolean",
+        "baseline_not_a_string",
     ],
 )
 def test_a_malformed_field_raises_a_config_error(tmp_path: Path, toml: str, match: str) -> None:

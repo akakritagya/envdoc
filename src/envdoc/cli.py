@@ -51,6 +51,11 @@ from typing import Annotated, NoReturn
 import typer
 
 from envdoc.audit import audit
+from envdoc.baseline import BASELINE_FILENAME, BaselineError
+from envdoc.baseline import apply as apply_baseline
+from envdoc.baseline import capture as capture_baseline
+from envdoc.baseline import parse as parse_baseline
+from envdoc.baseline import serialize as serialize_baseline
 from envdoc.config import Config, ConfigError
 from envdoc.config import resolve as resolve_config
 from envdoc.discovery import DiscoveredFile, discover
@@ -118,6 +123,13 @@ FailOnOption = Annotated[
 DryRunOption = Annotated[
     bool, typer.Option("--dry-run", help="Show what sync would add without writing it.")
 ]
+BaselineOption = Annotated[
+    str | None,
+    typer.Option(
+        "--baseline",
+        help="Suppress drift recorded in this file. Overrides pyproject.toml. Never auto-detected.",
+    ),
+]
 
 
 _COMPOSE_FILENAME = "docker-compose.yml"
@@ -176,6 +188,7 @@ def _resolve(
     format: OutputFormat | None,
     quiet: bool,
     include_timestamp: bool,
+    baseline: str | None = None,
 ) -> Config:
     return resolve_config(
         path,
@@ -184,6 +197,7 @@ def _resolve(
         format=format,
         quiet=quiet,
         include_timestamp=include_timestamp,
+        baseline=baseline,
     )
 
 
@@ -234,8 +248,18 @@ def check(
     format: FormatOption = None,
     quiet: QuietOption = False,
     include_timestamp: IncludeTimestampOption = False,
+    baseline: BaselineOption = None,
 ) -> None:
-    """Audit PATH and exit 1 if drift at or above --fail-on was found."""
+    """Audit PATH and exit 1 if drift at or above --fail-on was found.
+
+    --baseline suppresses drift already recorded in a file `envdoc baseline`
+    wrote, so a repository with existing debt can turn this gate on without
+    failing on day one -- new drift still fails. Opt-in only: a baseline is
+    never auto-detected, and a configured path that doesn't exist is exit 2,
+    not a silent pass -- the same failure a typo'd path produces read from the
+    other side, where suppression would silently cover everything instead of
+    nothing.
+    """
     try:
         config = _resolve(
             path,
@@ -244,9 +268,17 @@ def check(
             format=format,
             quiet=quiet,
             include_timestamp=include_timestamp,
+            baseline=baseline,
         )
         report = _run(path, config)
-    except (FileNotFoundError, NotADirectoryError, ConfigError) as exc:
+        if config.baseline is not None:
+            baseline_path = path / config.baseline
+            if not baseline_path.exists():
+                raise FileNotFoundError(f"no such baseline file: {baseline_path}")
+            text = baseline_path.read_text(encoding="utf-8")
+            parsed = parse_baseline(text, PurePosixPath(config.baseline))
+            report = apply_baseline(report, parsed).report
+    except (FileNotFoundError, NotADirectoryError, ConfigError, BaselineError, OSError) as exc:
         typer.echo(str(exc), err=True)
         _exit(2)
 
@@ -290,6 +322,55 @@ def sync(
     if result.changed and not dry_run:
         try:
             write_sync(result.updated, example_path)
+        except OSError as exc:
+            typer.echo(str(exc), err=True)
+            _exit(2)
+
+    if not config.quiet:
+        for warning in report.warnings:
+            typer.echo(warning, err=True)
+
+    _exit(0)
+
+
+@app.command()
+def baseline(
+    path: PathArgument = Path("."),
+    exclude: ExcludeOption = None,
+    quiet: QuietOption = False,
+    dry_run: DryRunOption = False,
+) -> None:
+    """Write today's drift to `.envdoc-baseline.json` for `check --baseline`.
+
+    Adopting the gate on a repository that already has drift means capturing
+    that drift first -- this records every non-OK `(name, status)` pair so
+    `check --baseline` suppresses exactly what already existed and still
+    fails on anything new. Keyed by name rather than file:line, so the file
+    stays valid across renames and refactors. Re-running it after fixing
+    something shrinks the file; re-running it on an unchanged repository
+    produces byte-identical output. Never exits 1 -- same as `sync`.
+    """
+    baseline_path = path / BASELINE_FILENAME
+    try:
+        config = _resolve(
+            path, exclude=exclude, fail_on=None, format=None, quiet=quiet, include_timestamp=False
+        )
+        report = _run(path, config)
+        captured = capture_baseline(report)
+        content = serialize_baseline(captured, tool_version=_package_version("envdoc"))
+    except (FileNotFoundError, NotADirectoryError, ConfigError, OSError) as exc:
+        typer.echo(str(exc), err=True)
+        _exit(2)
+
+    if captured.entries:
+        for name, status in captured.entries:
+            typer.echo(f"+ {name}: {status.value}")
+    else:
+        typer.echo("no drift to baseline")
+
+    if not dry_run:
+        try:
+            write_sync(content, baseline_path)
         except OSError as exc:
             typer.echo(str(exc), err=True)
             _exit(2)

@@ -298,7 +298,7 @@ def test_auditing_nothing_produces_an_empty_report() -> None:
 
 
 def test_every_status_has_a_place_in_the_headline_order() -> None:
-    """_headline's next() has no default, so a Status missing from
+    """headline()'s next() has no default, so a Status missing from
     _HEADLINE_ORDER would raise StopIteration the first time it was the
     headline -- inside `check`, on whatever CI run produced it first. The
     module-level assertion in audit.py is what actually enforces this; this
