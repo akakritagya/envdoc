@@ -5,6 +5,8 @@
 Audit a repository's environment-variable configuration — not just against
 `.env.example`, but against what the deployment actually provides.
 
+See [`DEMO.md`](DEMO.md) for real, runnable transcripts of every scenario below.
+
 ## What this is
 
 Every other environment-variable scanner is two-way: *used in code* vs *listed in
