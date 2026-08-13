@@ -7,9 +7,13 @@ that one file -- envdoc audits one repository at a time, and a parent
 directory's pyproject.toml usually belongs to a project this one doesn't
 share config with.
 
-`exclude`, `fail_on` and `format` use `None` at the CLI layer to mean "the
-user didn't say", so this module can tell that apart from "said the default
-on purpose". `quiet` and `include_timestamp` don't need the same treatment:
+`exclude`, `fail_on`, `format` and `baseline` use `None` at the CLI layer to
+mean "the user didn't say", so this module can tell that apart from "said the
+default on purpose". For `baseline` specifically, `None` is also the built-in
+default -- there is no auto-detected baseline file, only an explicit one, on
+the same reasoning as `ConfigError` below: a suppression file nobody asked for
+must never silently turn a red build green. `quiet` and `include_timestamp`
+don't need the same treatment:
 neither flag has a CLI spelling for "explicitly off" (there is no
 `--no-quiet`), so presence on the command line is unambiguous and the
 precedence collapses to `cli_flag or pyproject_value`.
@@ -48,6 +52,7 @@ class Config:
     format: OutputFormat = OutputFormat.TABLE
     quiet: bool = False
     include_timestamp: bool = False
+    baseline: str | None = None
 
 
 def _read_table(root: Path) -> dict[str, object]:
@@ -112,6 +117,15 @@ def _format(raw: dict[str, object]) -> OutputFormat:
         raise ConfigError(f"[tool.envdoc] format must be one of {options}, got {value!r}") from None
 
 
+def _baseline(raw: dict[str, object]) -> str | None:
+    if "baseline" not in raw:
+        return None
+    value = raw["baseline"]
+    if not isinstance(value, str):
+        raise ConfigError("[tool.envdoc] baseline must be a string")
+    return value
+
+
 def _bool(raw: dict[str, object], key: str) -> bool:
     if key not in raw:
         return False
@@ -129,6 +143,7 @@ def resolve(
     format: OutputFormat | None = None,
     quiet: bool = False,
     include_timestamp: bool = False,
+    baseline: str | None = None,
 ) -> Config:
     """CLI flag > `[tool.envdoc]` > default, decided independently per field."""
     raw = _read_table(root)
@@ -139,4 +154,5 @@ def resolve(
         format=format if format is not None else _format(raw),
         quiet=quiet or _bool(raw, "quiet"),
         include_timestamp=include_timestamp or _bool(raw, "include_timestamp"),
+        baseline=baseline if baseline is not None else _baseline(raw),
     )

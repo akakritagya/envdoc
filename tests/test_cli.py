@@ -32,8 +32,9 @@ def _write_clean_repo(root: Path) -> None:
 
 def _write_drifted_repo(root: Path) -> None:
     """A required variable used in code but never documented -- UNDOCUMENTED,
-    which gates at every FailOn threshold including the built-in default, and
-    what `sync` exists to fix."""
+    which gates at every FailOn threshold including the built-in default.
+    Reused by the `sync` tests (what it exists to fix) and the `baseline`
+    tests (what a baseline suppresses)."""
     (root / "app.py").write_text('import os\nos.environ["DATABASE_URL"]\n', encoding="utf-8")
 
 
@@ -268,6 +269,98 @@ def test_sync_never_gates_even_with_pending_changes(tmp_path: Path) -> None:
 
 def test_sync_exits_two_for_a_nonexistent_path() -> None:
     result = runner.invoke(cli.app, ["sync", "/no/such/directory"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "no such directory" in result.stderr
+
+
+def test_check_with_baseline_exits_zero_when_all_drift_is_baselined(tmp_path: Path) -> None:
+    _write_drifted_repo(tmp_path)
+    runner.invoke(cli.app, ["baseline", str(tmp_path)])
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path), "--baseline", ".envdoc-baseline.json"])
+
+    assert result.exit_code == 0
+
+
+def test_check_with_baseline_still_gates_on_new_drift(tmp_path: Path) -> None:
+    """Adopting a baseline doesn't grandfather in future drift -- only what
+    was captured at baseline time is suppressed."""
+    _write_drifted_repo(tmp_path)
+    runner.invoke(cli.app, ["baseline", str(tmp_path)])
+    (tmp_path / "worker.py").write_text('import os\nos.environ["STRIPE_KEY"]\n', encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path), "--baseline", ".envdoc-baseline.json"])
+
+    assert result.exit_code == 1
+    assert "STRIPE_KEY" in result.stdout
+
+
+def test_check_without_baseline_still_gates_normally(tmp_path: Path) -> None:
+    """A baseline is opt-in -- writing one must not change `check`'s default
+    behaviour for callers that never pass --baseline."""
+    _write_drifted_repo(tmp_path)
+    runner.invoke(cli.app, ["baseline", str(tmp_path)])
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path)])
+
+    assert result.exit_code == 1
+
+
+def test_check_exits_two_when_the_configured_baseline_file_is_missing(tmp_path: Path) -> None:
+    """Opt-in means a typo'd or unwritten baseline path is a broken
+    configuration, exit 2 -- never a silent pass that suppresses nothing."""
+    _write_clean_repo(tmp_path)
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path), "--baseline", "nope.json"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "no such baseline file" in result.stderr
+
+
+def test_baseline_command_writes_the_file_and_lists_captured_entries(tmp_path: Path) -> None:
+    _write_drifted_repo(tmp_path)
+
+    result = runner.invoke(cli.app, ["baseline", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "+ DATABASE_URL: undocumented" in result.stdout
+    assert (tmp_path / ".envdoc-baseline.json").exists()
+
+
+def test_baseline_command_dry_run_reports_and_writes_nothing(tmp_path: Path) -> None:
+    _write_drifted_repo(tmp_path)
+
+    result = runner.invoke(cli.app, ["baseline", str(tmp_path), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "+ DATABASE_URL: undocumented" in result.stdout
+    assert not (tmp_path / ".envdoc-baseline.json").exists()
+
+
+def test_baseline_command_run_twice_leaves_the_file_byte_identical(tmp_path: Path) -> None:
+    _write_drifted_repo(tmp_path)
+    runner.invoke(cli.app, ["baseline", str(tmp_path)])
+    first = (tmp_path / ".envdoc-baseline.json").read_bytes()
+
+    result = runner.invoke(cli.app, ["baseline", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert (tmp_path / ".envdoc-baseline.json").read_bytes() == first
+
+
+def test_baseline_command_never_gates_even_with_drift_present(tmp_path: Path) -> None:
+    _write_drifted_repo(tmp_path)
+
+    result = runner.invoke(cli.app, ["baseline", str(tmp_path)])
+
+    assert result.exit_code == 0
+
+
+def test_baseline_command_exits_two_for_a_nonexistent_path() -> None:
+    result = runner.invoke(cli.app, ["baseline", "/no/such/directory"])
 
     assert result.exit_code == 2
     assert result.stdout == ""

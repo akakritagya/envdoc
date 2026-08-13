@@ -45,8 +45,8 @@ Work proceeds **one task group at a time**, in the order set by the plan at
 
 Do not implement later groups speculatively. If a group turns out larger than estimated,
 **say so and propose a cut** — never silently absorb it. Pre-authorised cuts (drop and
-report, don't absorb): G10 baseline, G13 Go/Rust, G15's fly.toml + k8s half, G17
-hook/Action.
+report, don't absorb): G13 Go/Rust, G15's fly.toml + k8s half, G17 hook/Action. G10
+baseline was also pre-authorised as cuttable but the user chose to build it — see below.
 
 ## Architecture
 
@@ -55,6 +55,7 @@ cli.py         argv, config resolution, exit codes, printing   <- ONLY layer wit
    |
 render.py      Report -> table / markdown / json
 sync.py        Report -> updated .env.example text              <- pure planner + the one atomic write
+baseline.py    Report <-> suppression file                      <- capture/apply are pure; cli.py reads+writes
    |
 audit.py       three-way set algebra -> Report                 <- pure, no I/O
    |
@@ -98,6 +99,13 @@ defaults**, where two files disagree about a variable's fallback.
   default writes an empty value plus a comment citing every default and its file —
   `aggregate.cite_defaults()` is the one place that citation is formatted, shared with the
   conflicting-defaults warning so the file and the warning never tell two different stories.
+- Baseline entries are keyed `(name, status)`, **never `file:line`** — a rename or reformat
+  must not invalidate one, which is the entire point of keying by `Variable.name` instead of
+  an `Occurrence`. `audit.headline()` is public so `baseline.apply()` can recompute a
+  variable's lead status after suppressing one of several, rather than discarding it.
+- A baseline is **opt-in only** — `--baseline` / `[tool.envdoc] baseline`, never
+  auto-detected. A suppression file nobody asked for must never silently turn a red build
+  green, and a configured path that doesn't exist is exit 2, not a silent pass.
 
 ## Determinism is a contract
 
