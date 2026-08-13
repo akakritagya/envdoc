@@ -5,8 +5,8 @@
 Audit a repository's environment-variable configuration — not just against
 `.env.example`, but against what the deployment actually provides.
 
-See [`DEMO.md`](DEMO.md) for a worked case study — a real repository adopting envdoc,
-then catching a config bug before it reaches production.
+See [`DEMO.md`](DEMO.md) for a quick tour of each command, plus a worked case study of a
+real repository adopting envdoc and catching a config bug before it reaches production.
 
 ## What this is
 

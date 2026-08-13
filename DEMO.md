@@ -1,12 +1,189 @@
-# Case study: adopting envdoc on an existing service
+# Demo
 
-This walks through one continuous scenario, start to finish — a small backend called
-"Aperture" adopting envdoc, then shipping a change that envdoc catches before it reaches
-production. Every command and every table below is real output, captured by actually
-running envdoc against a throwaway repository built to match this story, not written out
-by hand. Reproduce any of it yourself; see [`README.md`](README.md) for installation.
+Two ways to see envdoc in action: a **quick tour** of each command in isolation, and a
+**case study** showing them together on one evolving repository. Every command and table
+below is real output, captured by actually running envdoc against throwaway repositories
+— nothing here is invented. Reproduce any of it yourself; see [`README.md`](README.md)
+for installation.
 
-## The service, before envdoc
+## Quick tour
+
+### The flagship case
+
+A required variable, used in code, documented in `.env.example` — and never set by the
+deployment manifest. This works on a laptop and dies the moment it's containerized, and
+it's invisible to any tool that only compares code against `.env.example`.
+
+```python
+# app.py
+import os
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+PORT = os.getenv("PORT", "8000")
+```
+
+```dotenv
+# .env.example
+DATABASE_URL=
+PORT=8000
+```
+
+```yaml
+# docker-compose.yml
+services:
+  web:
+    image: myapp:latest
+    environment:
+      - PORT=8000
+```
+
+```
+$ envdoc check .
+                                       envdoc report for .
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Variable     ┃ Status              ┃ Required ┃ Occurrences                                    ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ DATABASE_URL │ unset_in_deployment │ yes      │ .env.example:1; app.py:3                      │
+│ PORT         │ ok                  │ no       │ .env.example:2; app.py:4; docker-compose.yml:5 │
+└──────────────┴─────────────────────┴──────────┴────────────────────────────────────────────────┘
+$ echo $?
+1
+```
+
+`PORT` has a fallback and a value from `docker-compose.yml`, so it's `ok`.
+`DATABASE_URL` has no fallback and no line in `docker-compose.yml`'s `environment:` — the
+process reads it on boot and there is nothing there to give it a value.
+
+### Fixing it: `sync`
+
+`sync` never touches an `unset_in_deployment` finding — that's a deployment problem, not
+a documentation one — but it will append a variable the code reads that
+`.env.example` never mentions at all.
+
+```python
+# app.py
+import os
+
+STRIPE_KEY = os.environ["STRIPE_KEY"]
+```
+
+```
+$ envdoc sync .
++ STRIPE_KEY
+
+$ cat .env.example
+# Added by envdoc
+STRIPE_KEY=
+```
+
+### Adopting the gate on an existing repo: `baseline`
+
+`check` failing the first time it's ever run on a real repository is why most audit tools
+never get past the "let's try this" stage. `baseline` snapshots today's drift so `check`
+can be turned on immediately, without fixing sixty variables in the same PR — new drift
+still fails.
+
+```python
+# app.py
+import os
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+REDIS_URL = os.environ["REDIS_URL"]
+```
+
+```
+$ envdoc check .
+                  envdoc report for .
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Variable     ┃ Status       ┃ Required ┃ Occurrences ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ DATABASE_URL │ undocumented │ yes      │ app.py:3    │
+│ REDIS_URL    │ undocumented │ yes      │ app.py:4    │
+└──────────────┴──────────────┴──────────┴─────────────┘
+$ echo $?
+1
+
+$ envdoc baseline .
++ DATABASE_URL: undocumented
++ REDIS_URL: undocumented
+
+$ envdoc check . --baseline .envdoc-baseline.json
+               envdoc report for .
+┏━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Variable     ┃ Status ┃ Required ┃ Occurrences ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ DATABASE_URL │ ok     │ yes      │ app.py:3    │
+│ REDIS_URL    │ ok     │ yes      │ app.py:4    │
+└──────────────┴────────┴──────────┴─────────────┘
+2 findings suppressed by .envdoc-baseline.json
+$ echo $?
+0
+```
+
+The baseline is keyed by `(name, status)`, not `file:line` — moving `app.py` or
+reformatting it doesn't invalidate the entries the way a line-keyed baseline would.
+
+### Schema-first config: what a regex scanner can't see
+
+```python
+# config.py
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="APP_")
+
+    database_url: str
+    api_key: str = Field(alias="STRIPE_API_KEY")
+```
+
+```
+$ envdoc scan .
+                    envdoc report for .
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Variable         ┃ Status       ┃ Required ┃ Occurrences ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ APP_DATABASE_URL │ undocumented │ yes      │ config.py:8 │
+│ STRIPE_API_KEY   │ undocumented │ yes      │ config.py:9 │
+└──────────────────┴──────────────┴──────────┴─────────────┘
+```
+
+A regex scanner sees the field names `database_url` and `api_key` and stops there — both
+wrong. envdoc computes the actual environment-variable name: `env_prefix` plus the
+uppercased field name by default, or the literal `alias` when one overrides it entirely.
+
+### JavaScript and TypeScript
+
+```typescript
+// config.ts
+const apiKey = process.env.API_KEY;
+const port = process.env.PORT || "8000";
+const { DATABASE_URL } = process.env;
+```
+
+```
+$ envdoc scan .
+                  envdoc report for .
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Variable     ┃ Status       ┃ Required ┃ Occurrences ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ API_KEY      │ undocumented │ yes      │ config.ts:1 │
+│ DATABASE_URL │ undocumented │ yes      │ config.ts:3 │
+│ PORT         │ undocumented │ no       │ config.ts:2 │
+└──────────────┴──────────────┴──────────┴─────────────┘
+```
+
+Direct reads, destructuring, and a `||` fallback are all resolved the same way as their
+Python equivalents — `PORT` is optional with default `"8000"`, the other two are required.
+
+## Case study: adopting envdoc on an existing service
+
+The quick tour above shows each command on its own. This section is one continuous
+scenario, start to finish — a small backend called "Aperture" adopting envdoc, then
+shipping a change that envdoc catches before it reaches production.
+
+### The service, before envdoc
 
 Aperture is a small backend with the shape most real services have: config read through
 a `pydantic-settings` class, deployed with `docker-compose.yml`. It's been running for a
@@ -52,7 +229,7 @@ look like env vars in the code" against "words in `.env.example`" might catch th
 undocumented half of this. It has no way to know the deployment manifest is missing it
 too.
 
-## Day one: turning the gate on
+### Day one: turning the gate on
 
 The team runs `envdoc check` for the first time, expecting it to pass. It doesn't:
 
@@ -108,7 +285,7 @@ hook or the GitHub Action — see the README) and moves on. `APERTURE_REDIS_URL`
 broken, exactly as broken as it was five minutes ago — but it's now a known, tracked
 debt instead of invisible, and the gate is live for anything new.
 
-## Three weeks later: a new field lands
+### Three weeks later: a new field lands
 
 Aperture needs to verify Stripe webhooks now. Someone adds a field to `Settings`,
 documents it, and opens a PR:
@@ -172,7 +349,7 @@ fail in production, on the very first request, and nothing about the code review
 `.env.example` diff would have shown it — the reviewer would have to separately, manually
 cross-reference `docker-compose.yml` to catch this by eye.
 
-## Fixing it
+### Fixing it
 
 ```yaml
 # docker-compose.yml
@@ -212,7 +389,7 @@ variable it reads). Passing a secret through from the host's own environment is 
 practice, and envdoc's three-way model has a place for both halves of it on the same
 line without conflating them.
 
-## What just happened
+### What just happened
 
 Two failures, two different shapes, both real:
 
@@ -226,10 +403,9 @@ Neither would have been visible to a tool that only compares code against
 `.env.example`. That comparison passed at every step here; the deployment manifest is
 what was wrong, and it's the axis two-way tools don't look at.
 
-## Beyond this example
+## See also
 
-This walkthrough used Python and `pydantic-settings` against `docker-compose.yml`.
-envdoc reads the same three axes across `os.getenv`/`os.environ`, `process.env` in
-JS/TS/JSX/TSX, `Dockerfile`, GitHub Actions workflows, and `fly.toml` — see
-[`README.md`](README.md) for the full command reference, exit codes, the complete status
-table, and `[tool.envdoc]` configuration.
+Both sections above used Python and `pydantic-settings`/`docker-compose.yml`. envdoc
+reads the same three axes across JS/TS/JSX/TSX (`process.env`), `Dockerfile`, GitHub
+Actions workflows, and `fly.toml` — see [`README.md`](README.md) for the full command
+reference, exit codes, the complete status table, and `[tool.envdoc]` configuration.
