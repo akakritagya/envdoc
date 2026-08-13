@@ -69,6 +69,44 @@ def test_a_dockerfile_only_repo_with_no_compose_file_still_gates_on_unset(tmp_pa
     assert "unset_in_deployment" in result.stdout
 
 
+def test_a_workflow_only_repo_with_no_other_manifest_still_gates_on_unset(tmp_path: Path) -> None:
+    """Pins the same deployment_files wiring G14 fixed for Dockerfiles,
+    extended to workflows: a repo with only a .github/workflows/*.yml file
+    must still be able to flag a required variable no `env:` sets."""
+    _write_clean_repo(tmp_path)
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        "jobs:\n  build:\n    env:\n      BUILD_MODE: release\n", encoding="utf-8"
+    )
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "unset_in_deployment" in result.stdout
+
+
+def test_a_yml_file_outside_github_workflows_is_never_read_as_a_workflow(tmp_path: Path) -> None:
+    _write_clean_repo(tmp_path)
+    (tmp_path / "ci.yml").write_text(
+        "jobs:\n  build:\n    env:\n      DATABASE_URL: postgres://localhost\n", encoding="utf-8"
+    )
+
+    result = runner.invoke(cli.app, ["scan", str(tmp_path), "--format", "json"])
+
+    names = [v["name"] for v in json.loads(result.stdout)["variables"]]
+    assert names == ["DATABASE_URL"]
+
+
+def test_a_fly_toml_only_repo_with_no_other_manifest_still_gates_on_unset(tmp_path: Path) -> None:
+    _write_clean_repo(tmp_path)
+    (tmp_path / "fly.toml").write_text('[env]\n  PORT = "8080"\n', encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "unset_in_deployment" in result.stdout
+
+
 def test_check_exits_zero_when_the_compose_file_sets_the_variable(tmp_path: Path) -> None:
     _write_clean_repo(tmp_path)
     (tmp_path / "docker-compose.yml").write_text(

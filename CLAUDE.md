@@ -75,10 +75,14 @@ downstream of `sources/` needs to know which parser produced either. A `.py` fil
 by **two** extractors independently: `python_ast.py` for call-site reads, `python_settings.py`
 for `pydantic-settings` classes. Neither is a mode of the other — `cli.py` merges both
 `ExtractResult`s rather than picking one. `dockerfile.py` reads `ENV`/`ARG` alongside
-`docker_compose.py`'s `environment:`/`${VAR}` — the second and third places (after
-`os.getenv`) this codebase distinguishes "provides a value" (`environment:`, `ENV` →
-`DEPLOYMENT`) from "reads one" (`${VAR}` interpolation, `ARG` → `CODE`); getting that
-backwards on either is the one thing worth double-checking before touching either module.
+`docker_compose.py`'s `environment:`/`${VAR}`, and `github_actions.py` reads `env:`/
+`secrets.*`/`vars.*` the same way — the same "provides a value" (`environment:`, `ENV`,
+`env:` → `DEPLOYMENT`) vs. "reads one" (`${VAR}`, `ARG`, `secrets.*`/`vars.*` → `CODE`)
+split repeated a third time; getting that backwards on any of them is the one thing worth
+double-checking before touching any deployment-manifest module. `fly_toml.py` is the
+exception — `fly.toml` has no substitution syntax, so it's `DEPLOYMENT`-only. GitHub
+Actions workflows are also the first manifest matched by **directory**
+(`.github/workflows/*.yml`/`*.yaml`), not by name or extension alone.
 
 **Hard rules.** Nothing under `sources/` or `audit.py` imports `cli`. No `print` below
 `cli.py` — warnings accumulate on `Report.warnings` and the CLI decides whether `--quiet`
