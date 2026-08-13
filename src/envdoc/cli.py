@@ -32,14 +32,16 @@ repository, extract, audit. They differ only in what they do with the
 resulting `Report` -- `scan` always exits 0 on success, `check` exits 1 if
 `report.has_drift(config.fail_on)`.
 
-`docker-compose.yml` and `Dockerfile` are the deployment manifests with a
-parser so far. GHA, fly.toml and k8s manifests are G15's job. `_run` passes
-every discovered compose file's *and* Dockerfile's path to `audit()` as
-`deployment_files`, not just the ones that yielded a finding -- a manifest
-with no `environment:`/`ENV` in it at all is precisely the case that should
-make every required variable `UNSET_IN_DEPLOYMENT`, and inferring "were
-there manifests?" from the findings themselves would conclude there were
-none and call the repository clean.
+`docker-compose.yml`, `Dockerfile`, GitHub Actions workflows and `fly.toml`
+are the deployment manifests with a parser so far -- k8s manifests are
+cut from G15 (real complexity: list-shaped `env:`, cross-file `envFrom:`,
+several resource kinds) and left for a later group. `_run` passes every
+discovered manifest's path to `audit()` as `deployment_files`, not just the
+ones that yielded a finding -- a manifest with no `environment:`/`ENV`/
+`env:`/`[env]` in it at all is precisely the case that should make every
+required variable `UNSET_IN_DEPLOYMENT`, and inferring "were there
+manifests?" from the findings themselves would conclude there were none and
+call the repository clean.
 """
 
 from datetime import UTC, datetime
@@ -60,7 +62,16 @@ from envdoc.config import resolve as resolve_config
 from envdoc.discovery import DiscoveredFile, discover
 from envdoc.models import DynamicRef, ExtractResult, FailOn, Finding, Report
 from envdoc.render import OutputFormat, render
-from envdoc.sources import docker_compose, dockerfile, dotenv, python_ast, python_settings, ts_js
+from envdoc.sources import (
+    docker_compose,
+    dockerfile,
+    dotenv,
+    fly_toml,
+    github_actions,
+    python_ast,
+    python_settings,
+    ts_js,
+)
 from envdoc.sync import EXAMPLE_FILENAME
 from envdoc.sync import plan as plan_sync
 from envdoc.sync import write as write_sync
@@ -132,7 +143,9 @@ BaselineOption = Annotated[
 
 
 _COMPOSE_FILENAME = "docker-compose.yml"
+_FLY_TOML_FILENAME = "fly.toml"
 _TS_JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx")
+_WORKFLOWS_DIRECTORY = PurePosixPath(".github/workflows")
 
 
 def _is_dockerfile(path: PurePosixPath) -> bool:
@@ -147,13 +160,21 @@ def _is_dockerfile(path: PurePosixPath) -> bool:
     )
 
 
+def _is_github_workflow(path: PurePosixPath) -> bool:
+    """`.github/workflows/*.yml`/`*.yaml` -- the first manifest matched by
+    directory rather than by name or extension alone. Composite/reusable
+    actions (`action.yml` elsewhere in the tree) are not matched."""
+    return path.parent == _WORKFLOWS_DIRECTORY and path.suffix in (".yml", ".yaml")
+
+
 def _select(path: PurePosixPath) -> bool:
     """Which discovered files this group's extractors can read."""
     return (
         path.suffix == ".py"
         or path.suffix in _TS_JS_EXTENSIONS
-        or path.name in (".env.example", _COMPOSE_FILENAME)
+        or path.name in (".env.example", _COMPOSE_FILENAME, _FLY_TOML_FILENAME)
         or _is_dockerfile(path)
+        or _is_github_workflow(path)
     )
 
 
@@ -175,8 +196,12 @@ def _extract(discovered: DiscoveredFile) -> tuple[list[Finding], list[DynamicRef
         result = ts_js.extract(discovered.text, discovered.path)
     elif discovered.path.name == _COMPOSE_FILENAME:
         result = docker_compose.extract(discovered.text, discovered.path)
+    elif discovered.path.name == _FLY_TOML_FILENAME:
+        result = fly_toml.extract(discovered.text, discovered.path)
     elif _is_dockerfile(discovered.path):
         result = dockerfile.extract(discovered.text, discovered.path)
+    elif _is_github_workflow(discovered.path):
+        result = github_actions.extract(discovered.text, discovered.path)
     else:
         result = dotenv.extract(discovered.text, discovered.path)
     return list(result.findings), list(result.dynamic), list(result.warnings)
@@ -195,7 +220,11 @@ def _run(path: Path, config: Config) -> Report:
     warnings: list[str] = list(discovered.warnings)
     deployment_files: list[str] = []
     for file in discovered.files:
-        if file.path.name == _COMPOSE_FILENAME or _is_dockerfile(file.path):
+        if (
+            file.path.name in (_COMPOSE_FILENAME, _FLY_TOML_FILENAME)
+            or _is_dockerfile(file.path)
+            or _is_github_workflow(file.path)
+        ):
             deployment_files.append(str(file.path))
         file_findings, file_dynamic, file_warnings = _extract(file)
         findings.extend(file_findings)
