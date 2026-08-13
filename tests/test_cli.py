@@ -107,6 +107,54 @@ def test_a_fly_toml_only_repo_with_no_other_manifest_still_gates_on_unset(tmp_pa
     assert "unset_in_deployment" in result.stdout
 
 
+def test_orphan_deployment_surfaces_through_the_real_pipeline(tmp_path: Path) -> None:
+    """`ORPHAN_DEPLOYMENT` is already fully tested at the audit.py level with
+    synthetic Occurrences; this proves the real Dockerfile parser -> real
+    audit path produces it too, not just the pure status logic in isolation.
+    """
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\nENV STRAY_VAR=1\n", encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["scan", str(tmp_path), "--format", "json"])
+
+    payload = json.loads(result.stdout)
+    stray = next(v for v in payload["variables"] if v["name"] == "STRAY_VAR")
+    assert "orphan_deployment" in stray["statuses"]
+
+
+def test_every_manifest_kind_present_at_once_merges_without_dropping_anything(
+    tmp_path: Path,
+) -> None:
+    """Four different extractors' results, merged in one _run() call. Pins
+    that deployment_files_found unions across every kind rather than only
+    the last one processed, and that a variable set by two different
+    manifests lists both in deployment_targets, not just one."""
+    _write_clean_repo(tmp_path)
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  web:\n    environment:\n      - DATABASE_URL=x\n", encoding="utf-8"
+    )
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\nENV STRAY_VAR=1\n", encoding="utf-8")
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        "jobs:\n  build:\n    env:\n      DATABASE_URL: x\n", encoding="utf-8"
+    )
+    (tmp_path / "fly.toml").write_text('[env]\n  PORT = "8080"\n', encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["scan", str(tmp_path), "--format", "json"])
+
+    payload = json.loads(result.stdout)
+    assert sorted(payload["deployment_files_found"]) == [
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "docker-compose.yml",
+        "fly.toml",
+    ]
+    by_name = {v["name"]: v for v in payload["variables"]}
+    assert sorted(by_name["DATABASE_URL"]["deployment_targets"]) == [
+        ".github/workflows/ci.yml",
+        "docker-compose.yml",
+    ]
+
+
 def test_check_exits_zero_when_the_compose_file_sets_the_variable(tmp_path: Path) -> None:
     _write_clean_repo(tmp_path)
     (tmp_path / "docker-compose.yml").write_text(
