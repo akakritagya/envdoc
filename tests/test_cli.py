@@ -207,6 +207,27 @@ def test_an_exclude_flag_removes_a_file_from_the_scan(tmp_path: Path) -> None:
     assert names == ["DATABASE_URL"]
 
 
+def test_a_py_file_is_read_by_both_python_extractors_and_their_findings_merge(
+    tmp_path: Path,
+) -> None:
+    """python_ast.py and python_settings.py both read the same .py file
+    independently -- one is not a mode of the other, and cli.py merges what
+    each one finds rather than picking whichever ran first."""
+    (tmp_path / "config.py").write_text(
+        "import os\n"
+        "from pydantic_settings import BaseSettings\n\n\n"
+        'os.environ["DATABASE_URL"]\n\n\n'
+        "class Settings(BaseSettings):\n"
+        "    port: int = 8000\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(cli.app, ["scan", str(tmp_path), "--format", "json"])
+
+    names = sorted(v["name"] for v in json.loads(result.stdout)["variables"])
+    assert names == ["DATABASE_URL", "PORT"]
+
+
 def test_sync_adds_a_missing_variable_and_exits_zero(tmp_path: Path) -> None:
     _write_drifted_repo(tmp_path)
 
