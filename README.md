@@ -22,24 +22,6 @@ Second differentiator: envdoc reads **schema-first config**, not just call sites
 to the correct environment-variable name — something no regex or call-matching scanner can
 do, because the name isn't written anywhere near the field that reads it.
 
-## Prior art
-
-`envdoc` is already taken on PyPI, by a near-identical tool — credited first, since it's
-the closest existing work and shares the name:
-
-| Project | What it does | Where |
-|---|---|---|
-| [`Yanflare/envdoc`](https://pypi.org/project/envdoc/) | Scans Python for env-var usage, generates `.env.example` + a Markdown reference | PyPI |
-| [`spotenv`](https://www.npmjs.com/package/spotenv) | `.env.example` drift checking for Node projects | npm |
-| [`envscan`](https://pypi.org/project/envscan/) | Static analysis for env-var usage | PyPI |
-| `envsniff` | `.env` file linting | — |
-| `dotenv-linter` | Lints `.env`-format files themselves | — |
-| `evnx` | Environment-variable extraction | — |
-
-This project is **not published to PyPI** — the name collision is a non-issue for an
-unpublished tool, but it does mean installation below is git-based rather than
-`pip install envdoc`.
-
 ## Installation
 
 No package index required — every path below installs directly from a git ref.
