@@ -45,8 +45,9 @@ Work proceeds **one task group at a time**, in the order set by the plan at
 
 Do not implement later groups speculatively. If a group turns out larger than estimated,
 **say so and propose a cut** — never silently absorb it. Pre-authorised cuts (drop and
-report, don't absorb): G13 Go/Rust, G15's fly.toml + k8s half, G17 hook/Action. G10
-baseline was also pre-authorised as cuttable but the user chose to build it — see below.
+report, don't absorb): G13 Go/Rust, G15's fly.toml + k8s half. G10 baseline and G17
+hook/Action were also pre-authorised as cuttable but the user chose to build both — see
+below.
 
 ## Architecture
 

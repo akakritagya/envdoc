@@ -68,3 +68,15 @@ jobs:
 
       - name: Type check
         run: uv run mypy
+
+  # Exercises action.yml for real, on real GitHub Actions infrastructure --
+  # `uses: ./` references this action in its own checkout, which is the only
+  # way to verify it end-to-end without `act` installed locally. Defaults
+  # (command: check, path: .) are exactly `envdoc check .`, self-hosted.
+  action:
+    name: Composite action (dogfood)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./
