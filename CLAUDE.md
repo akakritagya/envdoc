@@ -66,6 +66,13 @@ sources/       code extractors | example parser | deployment parsers
 discovery.py   file walking + ignore engine
 ```
 
+`sources/` holds one extractor family per parser, not per language: `python_ast.py` reads
+Python via the standard library's `ast`; `ts_js.py` reads JS/TS/JSX/TSX via tree-sitter,
+the first extractor that isn't built on a language's own stdlib parser. Both plug into the
+identical `extract(text, file) -> ExtractResult` seam — a resolved name becomes a
+`Finding`, an unresolved reference becomes a `DynamicRef` rather than a guess — so nothing
+downstream of `sources/` needs to know which parser produced either.
+
 **Hard rules.** Nothing under `sources/` or `audit.py` imports `cli`. No `print` below
 `cli.py` — warnings accumulate on `Report.warnings` and the CLI decides whether `--quiet`
 suppresses them. `typer.Exit` appears **exactly once**, in `cli.py`. `audit.py` performs no
