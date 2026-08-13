@@ -61,7 +61,7 @@ from envdoc.config import resolve as resolve_config
 from envdoc.discovery import DiscoveredFile, discover
 from envdoc.models import DynamicRef, FailOn, Finding, Report
 from envdoc.render import OutputFormat, render
-from envdoc.sources import docker_compose, dotenv, python_ast
+from envdoc.sources import docker_compose, dotenv, python_ast, ts_js
 from envdoc.sync import EXAMPLE_FILENAME
 from envdoc.sync import plan as plan_sync
 from envdoc.sync import write as write_sync
@@ -133,16 +133,23 @@ BaselineOption = Annotated[
 
 
 _COMPOSE_FILENAME = "docker-compose.yml"
+_TS_JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx")
 
 
 def _select(path: PurePosixPath) -> bool:
-    """Which discovered files this group's three extractors can read."""
-    return path.suffix == ".py" or path.name in (".env.example", _COMPOSE_FILENAME)
+    """Which discovered files this group's extractors can read."""
+    return (
+        path.suffix == ".py"
+        or path.suffix in _TS_JS_EXTENSIONS
+        or path.name in (".env.example", _COMPOSE_FILENAME)
+    )
 
 
 def _extract(discovered: DiscoveredFile) -> tuple[list[Finding], list[DynamicRef], list[str]]:
     if discovered.path.suffix == ".py":
         result = python_ast.extract(discovered.text, discovered.path)
+    elif discovered.path.suffix in _TS_JS_EXTENSIONS:
+        result = ts_js.extract(discovered.text, discovered.path)
     elif discovered.path.name == _COMPOSE_FILENAME:
         result = docker_compose.extract(discovered.text, discovered.path)
     else:

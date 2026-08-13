@@ -22,6 +22,12 @@ dependencies = [
   # G14/G15) parse YAML bound to SafeLoader only -- never yaml.load's default
   # Loader, which can construct arbitrary Python objects from untrusted files.
   "pyyaml>=6.0,<7",
+  # sources/ts_js.py's grammar trio. tree-sitter is error-tolerant by design --
+  # unlike ast.parse, parsing malformed JS/TS never raises, so that extractor
+  # needs no try/except around it. All three ship py.typed.
+  "tree-sitter>=0.23,<1",
+  "tree-sitter-javascript>=0.23,<1",
+  "tree-sitter-typescript>=0.23,<1",
 ]
 description = "Audit a repository's environment-variable usage against its .env.example."
 keywords = ["dotenv", "environment-variables", "static-analysis", "linter", "cli"]
