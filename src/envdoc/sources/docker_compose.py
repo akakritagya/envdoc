@@ -1,27 +1,31 @@
-"""Read the variable names a `docker-compose.yml` provides at deploy time.
+"""Read the variable names a `docker-compose.yml` provides, and the ones it
+consumes, at deploy time.
 
-G8b's whole reason to exist: the flagship case envdoc is named for --
-required in code, documented in `.env.example`, absent from the compose
-file's `environment:` -- is invisible to a two-way audit and undetectable by
-this tool until something reads a deployment manifest. This is the minimal
-reader that makes it detectable. Deliberately narrow: only the `environment:`
-key under `services.<name>`, in both spellings Compose accepts --
+G8b's minimal slice read only `services.<name>.environment`, in both
+spellings Compose accepts -- list (`KEY=value`, bare `KEY`) and mapping
+(`KEY: value`, bare `KEY:`). That is still exactly what it reads for names
+Compose *provides*: `SourceKind.DEPLOYMENT`.
 
-    environment:
-      - PORT=8000        # list form, "KEY=value"
-      - DEBUG             # list form, bare name -- passed through from the
-                           # host's own environment at deploy time
+This module also reads two more things, both consumed rather than provided:
 
-    environment:
-      DATABASE_URL: postgres://localhost   # mapping form, "KEY: value"
-      REDIS_URL:                           # mapping form, bare name (null)
+    env_file: .env.production        -- points at a sibling file; warned
+                                         about, not resolved (see below)
 
-Both spellings of "bare name" still produce a Finding: envdoc's three-way
-audit only asks whether a manifest *declares* a name, never what value it
-resolves to, and a bare name is exactly as much a deliberate declaration as
-one with a literal value. `env_file:`, `${VAR}` interpolation elsewhere in
-the file, ports, volumes, and every other Compose key are out of scope here
--- G14 is where this parser gets deepened, not this one.
+    image: "myapp:${TAG:-latest}"    -- Compose's own variable substitution,
+                                         which runs over *every* scalar value
+                                         in the file, not just `environment:`
+
+`${VAR}` interpolation is `SourceKind.CODE`, not `DEPLOYMENT` -- the compose
+file *reads* `TAG` from the host at `docker compose up` time, the same
+relationship `os.getenv` or `process.env` has to a variable, not the one
+`environment:` has. An undocumented `${STRIPE_KEY}` is exactly as real a
+finding as an undocumented `os.getenv("STRIPE_KEY")`.
+
+`env_file:` is not resolved: doing that for real means reading a *second*
+file's content, and every extractor in this codebase is `extract(text, file)`
+-- single file, no I/O, no visibility into siblings. Resolving it would be a
+real architecture change, not a small addition, so instead each reference is
+named in a warning and left there.
 
 Parsed with `yaml.compose()` rather than `yaml.safe_load()`, and pinned to
 `SafeLoader`: `compose()` only parses and builds a graph of `Node` objects,
@@ -32,6 +36,7 @@ plain dicts and lists with no position information at all, and every other
 extractor in this codebase reports a real line number.
 """
 
+import re
 from collections.abc import Iterator
 from pathlib import PurePosixPath
 
@@ -46,6 +51,12 @@ from envdoc.models import (
     SourceKind,
     sort_key,
 )
+
+_VAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Checked longest-and-most-specific first: ":-"/"-" are the default-value
+# forms, ":?"/"?" are the required-with-message forms, and a literal ":-"
+# would otherwise also satisfy a bare "-" search at the wrong position.
+_OPERATORS = (":-", ":?", "-", "?")
 
 
 def _mapping_value(node: yaml.Node, key: str) -> yaml.Node | None:
@@ -87,8 +98,103 @@ def _environment_names(node: yaml.Node) -> Iterator[tuple[str, int]]:
         yield from _names_from_mapping(node)
 
 
+def _env_file_paths(node: yaml.Node) -> Iterator[str]:
+    """Every path an `env_file:` key names, bare string or list form."""
+    if isinstance(node, yaml.ScalarNode):
+        if node.value:
+            yield node.value
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            yield from _env_file_paths(item)
+
+
+def _walk_scalars(node: yaml.Node) -> Iterator[yaml.ScalarNode]:
+    """Every scalar in the document, keys and values alike -- interpolation
+    can appear in any of them, not just under `services.*.environment`."""
+    if isinstance(node, yaml.ScalarNode):
+        yield node
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            yield from _walk_scalars(item)
+    elif isinstance(node, yaml.MappingNode):
+        for key_node, value_node in node.value:
+            yield from _walk_scalars(key_node)
+            yield from _walk_scalars(value_node)
+
+
+def _parse_braced(inner: str) -> tuple[str, bool, str | None]:
+    """(name, required, default) for the text inside one `${...}`, or an
+    empty name when `inner` isn't a simple `VAR` or `VAR<operator>rest` shape
+    -- a name this codebase never fabricates is one it drops instead."""
+    for operator in _OPERATORS:
+        index = inner.find(operator)
+        if index == -1:
+            continue
+        name = inner[:index]
+        if not _VAR_NAME.fullmatch(name):
+            return "", True, None
+        rest = inner[index + len(operator) :]
+        if operator in (":-", "-"):
+            # A default containing a further "$" is a real fallback, not a
+            # literal -- nothing here is fabricated the way python_ast.py
+            # never invents a literal for a non-constant os.getenv default.
+            default = rest if "$" not in rest else None
+            return name, False, default
+        return name, True, None  # ":?" / "?": rest is an error message, never a default
+
+    if _VAR_NAME.fullmatch(inner):
+        return inner, True, None
+    return "", True, None
+
+
+def _find_interpolations(text: str) -> Iterator[tuple[str, bool, str | None]]:
+    """Every `$VAR` / `${VAR...}` reference in `text`, left to right.
+
+    A single scanner rather than a regex, because `${...}` needs real brace
+    balancing to find its own close rather than the next unrelated `}` in
+    the string. `$$` is Compose's own escaped, literal dollar sign and is
+    never a reference. Interpolation nested inside another reference's
+    default or error text is deliberately not sub-parsed -- see the module
+    docstring's build-plan link for why.
+    """
+    index = 0
+    length = len(text)
+    while index < length:
+        if text[index] != "$":
+            index += 1
+            continue
+
+        if text[index : index + 2] == "$$":
+            index += 2
+            continue
+
+        if text[index : index + 2] == "${":
+            depth = 1
+            cursor = index + 2
+            while cursor < length and depth > 0:
+                if text[cursor] == "{":
+                    depth += 1
+                elif text[cursor] == "}":
+                    depth -= 1
+                cursor += 1
+            if depth != 0:
+                break  # unterminated -- nothing further in this scalar is trustworthy
+            name, required, default = _parse_braced(text[index + 2 : cursor - 1])
+            if name:
+                yield name, required, default
+            index = cursor
+            continue
+
+        match = _VAR_NAME.match(text, index + 1)
+        if match:
+            yield match.group(0), True, None
+            index = match.end()
+        else:
+            index += 1
+
+
 def extract(text: str, file: PurePosixPath) -> ExtractResult:
-    """Every variable name declared in any service's `environment:` block."""
+    """Every variable name a compose file declares, and every one it reads."""
     try:
         root = yaml.compose(text, Loader=yaml.SafeLoader)
     except yaml.YAMLError as exc:
@@ -96,34 +202,57 @@ def extract(text: str, file: PurePosixPath) -> ExtractResult:
             findings=(), dynamic=(), warnings=(f"{file}: could not parse, skipped ({exc})",)
         )
 
-    services = _mapping_value(root, "services") if root is not None else None
-    if not isinstance(services, yaml.MappingNode):
-        return ExtractResult(findings=(), dynamic=(), warnings=())
-
     findings: list[Finding] = []
-    for _service_name, service in services.value:
-        environment = _mapping_value(service, "environment")
-        if environment is None:
-            continue
-        for name, line in _environment_names(environment):
-            findings.append(
-                Finding(
-                    name=name,
-                    occurrence=Occurrence(
-                        file=file,
-                        line=line,
-                        column=0,
-                        source=SourceKind.DEPLOYMENT,
-                        provider=Provider.DOCKER_COMPOSE,
-                        # Both code-only by the model's rule -- a compose key
-                        # has no fallback and "required" describes a call
-                        # site, not a manifest entry.
-                        required=False,
-                        default=None,
-                    ),
-                    confidence=Confidence.EXACT,
+    warnings: list[str] = []
+
+    services = _mapping_value(root, "services") if root is not None else None
+    if isinstance(services, yaml.MappingNode):
+        for _service_name, service in services.value:
+            environment = _mapping_value(service, "environment")
+            if environment is not None:
+                for name, line in _environment_names(environment):
+                    findings.append(
+                        Finding(
+                            name=name,
+                            occurrence=Occurrence(
+                                file=file,
+                                line=line,
+                                column=0,
+                                source=SourceKind.DEPLOYMENT,
+                                provider=Provider.DOCKER_COMPOSE,
+                                # Both code-only by the model's rule -- a
+                                # compose key has no fallback and "required"
+                                # describes a call site, not a manifest entry.
+                                required=False,
+                                default=None,
+                            ),
+                            confidence=Confidence.EXACT,
+                        )
+                    )
+
+            env_file = _mapping_value(service, "env_file")
+            if env_file is not None:
+                for path in _env_file_paths(env_file):
+                    warnings.append(f"{file}: env_file: {path} referenced, not resolved")
+
+    if root is not None:
+        for scalar in _walk_scalars(root):
+            for name, required, default in _find_interpolations(scalar.value):
+                findings.append(
+                    Finding(
+                        name=name,
+                        occurrence=Occurrence(
+                            file=file,
+                            line=scalar.start_mark.line + 1,
+                            column=0,
+                            source=SourceKind.CODE,
+                            provider=Provider.DOCKER_COMPOSE,
+                            required=required,
+                            default=default,
+                        ),
+                        confidence=Confidence.EXACT,
+                    )
                 )
-            )
 
     findings.sort(key=lambda f: sort_key(f.occurrence))
-    return ExtractResult(findings=tuple(findings), dynamic=(), warnings=())
+    return ExtractResult(findings=tuple(findings), dynamic=(), warnings=tuple(sorted(warnings)))

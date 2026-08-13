@@ -54,6 +54,21 @@ def test_the_flagship_case_a_required_variable_missing_from_compose_gates(tmp_pa
     assert "unset_in_deployment" in result.stdout
 
 
+def test_a_dockerfile_only_repo_with_no_compose_file_still_gates_on_unset(tmp_path: Path) -> None:
+    """Pins the deployment_files wiring fix G14 needed: a Dockerfile is now a
+    manifest in its own right, so a repo with only one (no docker-compose.yml
+    at all) must still be able to flag a required variable no ENV sets --
+    the exact case that silently regresses if Dockerfiles are discovered but
+    never counted as "manifests found"."""
+    _write_clean_repo(tmp_path)
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\nENV PORT=8000\n", encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["check", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "unset_in_deployment" in result.stdout
+
+
 def test_check_exits_zero_when_the_compose_file_sets_the_variable(tmp_path: Path) -> None:
     _write_clean_repo(tmp_path)
     (tmp_path / "docker-compose.yml").write_text(
