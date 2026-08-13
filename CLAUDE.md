@@ -148,7 +148,7 @@ the relevant commit messages:
 | `order=True` on `Occurrence` | Falls through to comparing `default: str \| None`; `None < "8000"` raises `TypeError` |
 | "error if required, else warning" | No severity type or `FailOn` enum was ever defined. `FailOn` is now a cumulative **set of statuses**; the required/optional split lives inside `has_drift` |
 | `envdoc` on PyPI at G18 | Name taken by a near-identical tool; not publishing |
-| Empty `__init__.py` (G0 commit) | Becomes a curated API at G8 — but as a design choice, **not** a semver promise, since nothing is published |
+| Empty `__init__.py` (G0 commit) | Stayed empty through the full build. `[project.scripts]` is the only entry point; nothing in 18 groups ever needed a Python import surface, so curating one at the end would be untested scope creep rather than "becoming true" |
 
 Also: `pyyaml` is required by the deployment parsers but is unlisted in the spec's layout.
 
@@ -174,7 +174,15 @@ subject gains a `(#NN)` suffix. Every commit ends with
 
 ## Self-hosting
 
-CI will eventually run `envdoc check .` on this repo. The test fixtures under
-`tests/fixtures/` are deliberately full of undocumented variables, so this only works via
-`[tool.envdoc] exclude = ["tests/fixtures/*"]` in `pyproject.toml` — which dogfoods the
-ignore engine while it's at it.
+CI runs `envdoc check .` on this repo, as a step in the `quality` job. It passes with no
+`[tool.envdoc] exclude` configuration, because this repo's own source reads no
+environment variables at all — the only finding a full self-scan produces is
+`UV_FROZEN` (`orphan_deployment`, from `ci.yml`'s own `env:` block, non-gating at the
+default threshold). The `tests/fixtures/` full of deliberately-undocumented variables an
+earlier draft of this plan described were never actually built — every group's tests
+constructed synthetic repos via `tmp_path` instead, so there was never anything for
+`exclude` to suppress here. The `exclude` mechanism itself is real and unit-tested
+(`tests/test_discovery.py`, `tests/test_config.py`); it just isn't currently load-bearing
+for this repo's own self-hosting. If `envdoc`'s own source ever gains a real
+`os.getenv` call or an intentionally-noisy fixture directory, `[tool.envdoc] exclude` is
+what to reach for.

@@ -69,6 +69,14 @@ jobs:
       - name: Type check
         run: uv run mypy
 
+      # Self-hosting: envdoc audits its own environment-variable configuration
+      # via the normal dev workflow. Deliberately separate from the `action`
+      # job below even though both run the same command today -- this proves
+      # the config is clean through `uv run`, that job proves the Action
+      # mechanism itself, and the two could diverge later.
+      - name: Self-check
+        run: uv run envdoc check .
+
   # Exercises action.yml for real, on real GitHub Actions infrastructure --
   # `uses: ./` references this action in its own checkout, which is the only
   # way to verify it end-to-end without `act` installed locally. Defaults
