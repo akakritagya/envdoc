@@ -1,0 +1,29 @@
+name: envdoc
+description: Audit a repository's environment-variable configuration against its deployment manifests.
+inputs:
+  command:
+    description: envdoc subcommand to run (scan, check, sync, baseline).
+    default: check
+  path:
+    description: Repository path to audit.
+    default: .
+  args:
+    description: Additional arguments passed through, e.g. --fail-on any.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v9.0.0
+      with:
+        enable-cache: true
+
+    # Not published to PyPI, so this installs from wherever `uses:` pinned
+    # this action -- github.action_path is that exact checkout, not an index
+    # that doesn't have this package on it.
+    - name: Install envdoc from this action's own checkout
+      shell: bash
+      run: uv tool install --python 3.12 "${{ github.action_path }}"
+
+    - name: Run envdoc
+      shell: bash
+      run: envdoc ${{ inputs.command }} "${{ inputs.path }}" ${{ inputs.args }}
