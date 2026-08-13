@@ -78,7 +78,8 @@ from envdoc.sync import write as write_sync
 
 app = typer.Typer(
     name="envdoc",
-    help="Audit a repository's environment-variable usage against its .env.example.",
+    help="Audit environment-variable configuration across code, .env.example, and what "
+    "your deployment actually provides.",
 )
 
 
@@ -108,7 +109,8 @@ VersionOption = Annotated[
 
 @app.callback()
 def main(version: VersionOption = False) -> None:
-    """Audit a repository's environment-variable usage against its .env.example."""
+    """Audit environment-variable configuration across code, .env.example, and what
+    your deployment actually provides."""
 
 
 PathArgument = Annotated[Path, typer.Argument(help="Repository to scan. Defaults to the cwd.")]

@@ -29,7 +29,7 @@ dependencies = [
   "tree-sitter-javascript>=0.23,<1",
   "tree-sitter-typescript>=0.23,<1",
 ]
-description = "Audit a repository's environment-variable usage against its .env.example."
+description = "Audit environment-variable configuration across code, .env.example, and what your deployment actually provides."
 keywords = ["dotenv", "environment-variables", "static-analysis", "linter", "cli"]
 license = "MIT"
 license-files = ["LICENSE"]
