@@ -74,7 +74,11 @@ identical `extract(text, file) -> ExtractResult` seam — a resolved name become
 downstream of `sources/` needs to know which parser produced either. A `.py` file is read
 by **two** extractors independently: `python_ast.py` for call-site reads, `python_settings.py`
 for `pydantic-settings` classes. Neither is a mode of the other — `cli.py` merges both
-`ExtractResult`s rather than picking one.
+`ExtractResult`s rather than picking one. `dockerfile.py` reads `ENV`/`ARG` alongside
+`docker_compose.py`'s `environment:`/`${VAR}` — the second and third places (after
+`os.getenv`) this codebase distinguishes "provides a value" (`environment:`, `ENV` →
+`DEPLOYMENT`) from "reads one" (`${VAR}` interpolation, `ARG` → `CODE`); getting that
+backwards on either is the one thing worth double-checking before touching either module.
 
 **Hard rules.** Nothing under `sources/` or `audit.py` imports `cli`. No `print` below
 `cli.py` — warnings accumulate on `Report.warnings` and the CLI decides whether `--quiet`
