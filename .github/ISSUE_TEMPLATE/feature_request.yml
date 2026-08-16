@@ -1,0 +1,34 @@
+name: Feature request
+description: A new source, output format, or capability for envdoc.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the gap?
+      description: >
+        What configuration mismatch or workflow does envdoc currently miss?
+        envdoc's whole reason for existing is the third axis (deployment
+        manifests) and schema-first config — if this is closer to the
+        crowded two-way category (code vs `.env.example`), say so and explain
+        why it still belongs here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should envdoc do instead? Include an example if useful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
