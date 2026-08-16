@@ -1,0 +1,62 @@
+name: Bug report
+description: Something envdoc scanned, rendered, or synced incorrectly.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you run, and what did envdoc report or do?
+      placeholder: |
+        Ran `envdoc check .` and it reported X, but the repo actually has Y.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: >
+        A minimal file (or small set of files) that reproduces the issue —
+        e.g. the relevant snippet of `docker-compose.yml`, `.env.example`, or
+        source code envdoc mis-scanned. This is the single most useful thing
+        you can include, since envdoc's entire surface is reading files from
+        a target repo.
+      render: text
+
+  - type: input
+    id: command
+    attributes:
+      label: Command run
+      placeholder: envdoc check . --format json
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: envdoc version / commit
+      description: Output of `envdoc --version`, or the git ref installed from.
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Logs, `[tool.envdoc]` config, baseline file, etc.
